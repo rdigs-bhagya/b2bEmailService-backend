@@ -1,0 +1,38 @@
+service: b2b-email-service
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+
+  environment:
+    SGEMAIL_TABLE: sendgrid_email_logs_for_b2b
+    SENDGRID_API_KEY: ${env:SENDGRID_API_KEY}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:Scan
+          Resource: 
+            - arn:aws:dynamodb:us-east-1:*:table/sendgrid_email_logs_for_b2b
+
+functions:
+  api:
+    handler: index.handler
+    timeout: 28
+    memorySize: 512
+    events:
+      - http:
+          path: api/v1/{proxy+}
+          method: ANY
+          cors: true
+
+custom:
+  serverless-offline:
+    port: 3003
+
+plugins:
+  - serverless-offline

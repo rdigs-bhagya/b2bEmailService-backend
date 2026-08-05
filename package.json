@@ -1,0 +1,27 @@
+{
+  "name": "email-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "sls offline"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.758.0",
+    "@aws-sdk/lib-dynamodb": "^3.758.0",
+    "@aws-sdk/util-dynamodb": "^3.758.0",
+    "@sendgrid/mail": "^8.1.6",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "imap": "^0.8.19",
+    "mailparser": "^3.9.3",
+    "nodemailer": "^7.0.12",
+    "serverless-http": "^3.2.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "serverless-offline": "^14.4.0"
+  }
+}
