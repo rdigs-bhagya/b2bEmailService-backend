@@ -118,19 +118,37 @@ const sendEmailSendGrid = async (req, res) => {
  */
 const getSendGridEmails = async (req, res) => {
   try {
-    const result = await ddb.send(
-      new ScanCommand({
-        TableName: process.env.SGEMAIL_TABLE,
-      })
+    const limit = req.query.limit || 10;
+
+    const response = await fetch(
+      `https://api.sendgrid.com/v3/messages?limit=${limit}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${process.env.SENDGRID_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
     );
 
-    const filtered = result.Items.filter(
-      (item) => item.provider === "SENDGRID"
-    );
+    const data = await response.json();
 
-    res.status(200).json(filtered);
+    if (!response.ok) {
+      return res.status(response.status).json({
+        message: "Failed to fetch SendGrid emails",
+        error: data,
+      });
+    }
+
+    // Return only the messages array if preferred
+    return res.status(200).json(data.messages || data);
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch SendGrid emails" });
+    console.error("SendGrid Error:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
+    });
   }
 };
 
