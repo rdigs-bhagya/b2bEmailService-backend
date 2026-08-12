@@ -7,6 +7,7 @@ provider:
 
   environment:
     SGEMAIL_TABLE: sendgrid_email_logs_for_b2b
+    USERS_TABLE: b2b_users
     SENDGRID_API_KEY: ${env:SENDGRID_API_KEY}
 
   iam:
@@ -16,8 +17,11 @@ provider:
           Action:
             - dynamodb:PutItem
             - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
           Resource: 
             - arn:aws:dynamodb:us-east-1:*:table/sendgrid_email_logs_for_b2b
+            - arn:aws:dynamodb:us-east-1:*:table/b2b_users
 
 functions:
   api:
@@ -36,3 +40,17 @@ custom:
 
 plugins:
   - serverless-offline
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: b2b_users
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

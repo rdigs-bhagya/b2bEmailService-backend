@@ -1,44 +1,121 @@
 const sgMail = require("@sendgrid/mail");
 const crypto = require("crypto");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { PutCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const { PutCommand, ScanCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+const bcrypt = require("bcryptjs");
 
 const ddb = new DynamoDBClient({ region: "us-east-1" });
 
-/**
- * ENVIRONMENT CHECKS
- */
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-const SGEMAIL_TABLE = process.env.SGEMAIL_TABLE;
-
-if (!SENDGRID_API_KEY) {
-  throw new Error("Missing required environment variable: SENDGRID_API_KEY");
-}
-
-if (!SGEMAIL_TABLE) {
-  throw new Error("Missing required environment variable: SGEMAIL_TABLE");
-}
-
-/**
- * SENDGRID CONFIG
- */
-sgMail.setApiKey(SENDGRID_API_KEY);
-
-/**
- * SENDER EMAIL
- */
-const FROM_EMAIL = "raul@b2bnetworkservices.com";
-
-/**
- * WEBSITE LINK
- */
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+const SGEMAIL_TABLE = process.env.SGEMAIL_TABLE || "";
+const USERS_TABLE = process.env.USERS_TABLE || "b2b_users";
+const FROM_EMAIL = process.env.SENDER_EMAIL || "raul@b2bnetworkservices.com";
 const WEBSITE_LINK = "https://pmo.selecthub.com/rdigs-erp-software-executive-pricing-guide/";
 const WEBSITE_KEY = "SELECTHUB_EXECUTIVE_GUIDE";
 const EMAIL_SUBJECT = "Compare ERP Costs & Avoid Hidden Fees";
 
-/**
- * EMAIL TEMPLATE
- */
+const configureSendGrid = () => {
+  if (SENDGRID_API_KEY) {
+    sgMail.setApiKey(SENDGRID_API_KEY);
+  }
+};
+
+configureSendGrid();
+
+const loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Fetch user from DynamoDB
+    const result = await ddb.send(
+      new GetCommand({
+        TableName: USERS_TABLE,
+        Key: { email: normalizedEmail }
+      })
+    );
+
+    const user = result.Item;
+
+    if (!user) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    // Generate a simple token (in production, use JWT)
+    const expectedToken = process.env.API_AUTH_TOKEN || process.env.LOGIN_TOKEN || "rdigs-dashboard-token";
+
+    return res.status(200).json({
+      message: "Login successful",
+      token: expectedToken,
+      user: {
+        email: user.email,
+        name: user.name || "User",
+      },
+    });
+
+  } catch (error) {
+    console.error("Login Error:", error);
+    return res.status(500).json({ message: "Login failed" });
+  }
+};
+
+const signupUser = async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check if user already exists
+    const existingUser = await ddb.send(
+      new GetCommand({
+        TableName: USERS_TABLE,
+        Key: { email: normalizedEmail }
+      })
+    );
+
+    if (existingUser.Item) {
+      return res.status(409).json({ message: "User already exists" });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // Save user
+    await ddb.send(
+      new PutCommand({
+        TableName: USERS_TABLE,
+        Item: {
+          email: normalizedEmail,
+          passwordHash,
+          createdAt: new Date().toISOString()
+        }
+      })
+    );
+
+    return res.status(201).json({ message: "User created successfully" });
+  } catch (error) {
+    console.error("Signup Error:", error);
+    return res.status(500).json({ message: "Signup failed" });
+  }
+};
+
 const getEmailHtml = (recipientName) => `
 <div style="font-family: Arial, sans-serif; color:#333; line-height:1.6;">
   <p>Hi ${recipientName || "Dear"},</p>
@@ -65,11 +142,16 @@ const getEmailHtml = (recipientName) => `
 </div>
 `;
 
-/**
- * SEND EMAIL VIA SENDGRID
- */
 const sendEmailSendGrid = async (req, res) => {
   try {
+    if (!SENDGRID_API_KEY) {
+      return res.status(500).json({ message: "SendGrid API key is not configured" });
+    }
+
+    if (!SGEMAIL_TABLE) {
+      return res.status(500).json({ message: "Email table is not configured" });
+    }
+
     const { toEmail, name } = req.body;
     const recipientName = name?.trim();
 
@@ -86,15 +168,15 @@ const sendEmailSendGrid = async (req, res) => {
 
     await sgMail.send(msg);
 
-    // Save log
     await ddb.send(
       new PutCommand({
-        TableName: process.env.SGEMAIL_TABLE,
+        TableName: SGEMAIL_TABLE,
         Item: {
           emailId: crypto.randomUUID(),
           provider: "SENDGRID",
           fromEmail: FROM_EMAIL,
           toEmail,
+          subject: EMAIL_SUBJECT,
           websiteKey: WEBSITE_KEY,
           websiteLink: WEBSITE_LINK,
           status: "SENT",
@@ -113,19 +195,112 @@ const sendEmailSendGrid = async (req, res) => {
   }
 };
 
-/**
- * OPTIONAL: GET ONLY SENDGRID EMAILS
- */
+const normalizeEmailStatus = (status) => {
+  const normalizedStatus = (status || "").toString().toLowerCase();
+
+  if (["sent", "delivered", "success", "completed"].includes(normalizedStatus)) {
+    return "sent";
+  }
+
+  if (["pending", "queued", "processing", "in_progress"].includes(normalizedStatus)) {
+    return "pending";
+  }
+
+  return "failed";
+};
+
+const getDashboardEmailSummary = async (req, res) => {
+  const defaultStats = {
+    total: 0,
+    sent: 0,
+    pending: 0,
+    failed: 0,
+  };
+
+  try {
+    if (!SENDGRID_API_KEY) {
+      return res.status(200).json({
+        data: {
+          stats: defaultStats,
+          emails: [],
+        },
+      });
+    }
+
+    const response = await fetch("https://api.sendgrid.com/v3/messages?limit=100", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${SENDGRID_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        message: "Failed to fetch SendGrid messages",
+        error: payload,
+      });
+    }
+
+    const items = Array.isArray(payload?.messages) ? payload.messages : [];
+
+    const filteredItems = items.filter((item) => {
+      const fromEmail = (item?.from_email || item?.from?.email || "").toLowerCase();
+      return fromEmail === FROM_EMAIL.toLowerCase();
+    });
+
+    const normalizedEmails = filteredItems
+      .map((item) => ({
+        id: item?.msg_id || item?.id || `${item?.to_email || "email"}-${Date.now()}`,
+        to: item?.to_email || item?.to || "",
+        subject: item?.subject || EMAIL_SUBJECT,
+        body: item?.websiteLink || item?.subject || "",
+        status: normalizeEmailStatus(item?.status),
+        sentAt: item?.last_event_time || new Date().toISOString(),
+      }))
+      .sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt));
+
+    const stats = {
+      total: normalizedEmails.length,
+      sent: normalizedEmails.filter((email) => email.status === "sent").length,
+      pending: normalizedEmails.filter((email) => email.status === "pending").length,
+      failed: normalizedEmails.filter((email) => email.status === "failed").length,
+    };
+
+    return res.status(200).json({
+      data: {
+        stats,
+        emails: normalizedEmails.slice(0, 5),
+      },
+    });
+  } catch (error) {
+    console.error("Dashboard Email Error:", error);
+
+    return res.status(200).json({
+      data: {
+        stats: defaultStats,
+        emails: [],
+      },
+    });
+  }
+};
+
 const getSendGridEmails = async (req, res) => {
   try {
     const limit = req.query.limit || 10;
+
+    if (!SENDGRID_API_KEY) {
+      return res.status(500).json({ message: "SendGrid API key is not configured" });
+    }
 
     const response = await fetch(
       `https://api.sendgrid.com/v3/messages?limit=${limit}`,
       {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${process.env.SENDGRID_API_KEY}`,
+          Authorization: `Bearer ${SENDGRID_API_KEY}`,
           "Content-Type": "application/json",
         },
       }
@@ -140,7 +315,6 @@ const getSendGridEmails = async (req, res) => {
       });
     }
 
-    // Return only the messages array if preferred
     return res.status(200).json(data.messages || data);
   } catch (error) {
     console.error("SendGrid Error:", error);
@@ -152,4 +326,4 @@ const getSendGridEmails = async (req, res) => {
   }
 };
 
-module.exports = { sendEmailSendGrid, getSendGridEmails };
+module.exports = { sendEmailSendGrid, getSendGridEmails, getDashboardEmailSummary, loginUser, signupUser };
