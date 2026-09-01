@@ -10,9 +10,19 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const SGEMAIL_TABLE = process.env.SGEMAIL_TABLE || "";
 const USERS_TABLE = process.env.USERS_TABLE || "b2b_users";
 const FROM_EMAIL = process.env.SENDER_EMAIL || "raul@b2bnetworkservices.com";
-const WEBSITE_LINK = "https://pmo.selecthub.com/rdigs-erp-software-executive-pricing-guide/";
-const WEBSITE_KEY = "SELECTHUB_EXECUTIVE_GUIDE";
-const EMAIL_SUBJECT = "Compare ERP Costs & Avoid Hidden Fees";
+const WEBSITES = {
+  SELECTHUB_EXECUTIVE_GUIDE: {
+    link: "https://pmo.selecthub.com/rdigs-erp-software-executive-pricing-guide/",
+    subject: "Compare ERP Costs & Avoid Hidden Fees",
+    title: "Executive Pricing Guide ERP Software - 2026"
+  },
+  SELECTHUB_CRM_GUIDE: {
+    link: "https://www.b2bnetworkservices.com/wp-content/uploads/2026/07/From-Detection-to-Prevention.pdf",
+    subject: "From Detection to Prevention: Why the future of Brand Protection starts before infringement happens",
+    title: "From Detection to Prevention"
+  }
+};
+const DEFAULT_WEBSITE_KEY = "SELECTHUB_EXECUTIVE_GUIDE";
 
 const configureSendGrid = () => {
   if (SENDGRID_API_KEY) {
@@ -25,7 +35,7 @@ configureSendGrid();
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    
+
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required" });
     }
@@ -116,21 +126,21 @@ const signupUser = async (req, res) => {
   }
 };
 
-const getEmailHtml = (recipientName) => `
+const getEmailHtml = (recipientName, website) => `
 <div style="font-family: Arial, sans-serif; color:#333; line-height:1.6;">
   <p>Hi ${recipientName || "Dear"},</p>
 
   <p>
-    Thank you again for your time earlier. As promised, here's the guide we discussed: 👉 <a href="${WEBSITE_LINK}" target="_blank"><strong>Executive Pricing Guide ERP Software - 2026</strong></a>
+    Thank you again for your time earlier. As promised, here’s the guide we discussed: 👉 <a href="${website.link}" target="_blank"><strong>${website.title}</strong></a>
   </p>
 
   <p>
-    A colleague from SelectHub will be in touch shortly to follow up. In the meantime, please feel free to reach out if you have any questions.
+    A colleague from Corsearch will be in touch shortly to follow up. In the meantime, please feel free to reach out if you have any questions.
   </p>
 
   <p>
-    Best regards,<br/>
-    Raul
+    Regards,<br/>
+    Raul Miller
   </p>
 
   <hr style="margin:30px 0;" />
@@ -152,8 +162,11 @@ const sendEmailSendGrid = async (req, res) => {
       return res.status(500).json({ message: "Email table is not configured" });
     }
 
-    const { toEmail, name } = req.body;
+    const { toEmail, name, websiteKey } = req.body;
     const recipientName = name?.trim();
+
+    const selectedKey = websiteKey && WEBSITES[websiteKey] ? websiteKey : DEFAULT_WEBSITE_KEY;
+    const website = WEBSITES[selectedKey];
 
     if (!toEmail || !toEmail.includes("@")) {
       return res.status(400).json({ message: "Invalid email" });
@@ -162,8 +175,8 @@ const sendEmailSendGrid = async (req, res) => {
     const msg = {
       to: toEmail,
       from: { email: FROM_EMAIL, name: "Raul Miller" },
-      subject: EMAIL_SUBJECT,
-      html: getEmailHtml(recipientName),
+      subject: website.subject,
+      html: getEmailHtml(recipientName, website),
     };
 
     await sgMail.send(msg);
@@ -176,9 +189,9 @@ const sendEmailSendGrid = async (req, res) => {
           provider: "SENDGRID",
           fromEmail: FROM_EMAIL,
           toEmail,
-          subject: EMAIL_SUBJECT,
-          websiteKey: WEBSITE_KEY,
-          websiteLink: WEBSITE_LINK,
+          subject: website.subject,
+          websiteKey: selectedKey,
+          websiteLink: website.link,
           status: "SENT",
           sentAt: new Date().toISOString(),
         },
